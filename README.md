@@ -12,7 +12,7 @@
 
 ## URL
 - **開発環境**: https://3000-ienkttsugveysqcyvceq5-de59bda9.sandbox.novita.ai
-- **GitHub**: (未設定)
+- **GitHub**: https://github.com/tomohiko-0427/family-budget-book
 
 ## 現在完成している機能
 ✅ カテゴリー管理
