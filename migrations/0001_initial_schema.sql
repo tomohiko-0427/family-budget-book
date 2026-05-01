@@ -33,6 +33,7 @@ INSERT OR IGNORE INTO categories (name, type, icon) VALUES
   ('その他収入', 'income', '💰'),
   ('食費', 'expense', '🍽️'),
   ('日用品', 'expense', '🧴'),
+  ('衣料品', 'expense', '👕'),
   ('交通費', 'expense', '🚃'),
   ('娯楽', 'expense', '🎮'),
   ('光熱費', 'expense', '💡'),
