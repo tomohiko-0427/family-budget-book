@@ -11,6 +11,7 @@
   - 取引履歴の削除
 
 ## URL
+- **本番環境**: https://e84031ca.family-budget-book.pages.dev/
 - **開発環境**: https://3000-ienkttsugveysqcyvceq5-de59bda9.sandbox.novita.ai
 - **GitHub**: https://github.com/tomohiko-0427/family-budget-book
 
@@ -73,12 +74,13 @@
 
 ## デプロイ
 - **プラットフォーム**: Cloudflare Pages
-- **ステータス**: ✅ ローカル開発環境で動作中
+- **ステータス**: ✅ 本番環境で稼働中
+- **本番URL**: https://e84031ca.family-budget-book.pages.dev/
 - **技術スタック**: 
   - バックエンド: Hono + TypeScript
   - フロントエンド: TailwindCSS + Vanilla JavaScript
   - データベース: Cloudflare D1 (SQLite)
-  - デプロイ: Cloudflare Pages (準備完了)
+  - デプロイ: Cloudflare Pages
 - **最終更新**: 2026-01-26
 
 ## ローカル開発
