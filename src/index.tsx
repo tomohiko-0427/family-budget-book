@@ -1,11 +1,29 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { basicAuth } from 'hono/basic-auth'
 
 type Bindings = {
   DB: D1Database;
+  BASIC_AUTH_USERNAME?: string;
+  BASIC_AUTH_PASSWORD?: string;
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
+
+// Basic認証（全体にかける）
+app.use('*', async (c, next) => {
+  // 環境変数から認証情報を取得（未設定の場合はデフォルト値）
+  const username = c.env.BASIC_AUTH_USERNAME || 'admin'
+  const password = c.env.BASIC_AUTH_PASSWORD || 'password123'
+  
+  const auth = basicAuth({
+    username,
+    password,
+    realm: '家計簿アプリ',
+  })
+  
+  return auth(c, next)
+})
 
 // CORS設定（API用）
 app.use('/api/*', cors())
