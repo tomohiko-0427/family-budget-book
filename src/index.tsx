@@ -273,6 +273,38 @@ app.get('/api/summary/tags', async (c) => {
   }
 })
 
+// カテゴリ別集計
+app.get('/api/summary/categories', async (c) => {
+  try {
+    const month = c.req.query('month')
+    
+    let query = `
+      SELECT 
+        c.id,
+        c.name,
+        c.type,
+        c.icon,
+        COUNT(tr.id) as transaction_count,
+        SUM(tr.amount) as total_amount
+      FROM categories c
+      LEFT JOIN transactions tr ON c.id = tr.category_id
+    `
+    
+    if (month) {
+      query += ` WHERE tr.date LIKE '${month}%'`
+    }
+    
+    query += ` GROUP BY c.id, c.name, c.type, c.icon ORDER BY c.type, total_amount DESC`
+    
+    const { results } = await c.env.DB.prepare(query).all()
+    
+    return c.json({ category_summary: results })
+  } catch (error) {
+    console.error(error)
+    return c.json({ error: 'Failed to fetch category summary' }, 500)
+  }
+})
+
 // サマリー取得（月別）
 app.get('/api/summary', async (c) => {
   try {
@@ -451,10 +483,16 @@ app.get('/', (c) => {
                         <i class="fas fa-history mr-2 text-blue-600"></i>
                         取引履歴
                     </h2>
-                    <a href="/tags" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition duration-200 text-sm font-semibold">
-                        <i class="fas fa-chart-bar mr-2"></i>
-                        タグ別集計
-                    </a>
+                    <div class="flex gap-2">
+                        <a href="/categories" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition duration-200 text-sm font-semibold">
+                            <i class="fas fa-list mr-2"></i>
+                            カテゴリ別集計
+                        </a>
+                        <a href="/tags" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition duration-200 text-sm font-semibold">
+                            <i class="fas fa-chart-bar mr-2"></i>
+                            タグ別集計
+                        </a>
+                    </div>
                 </div>
                 <div id="transactions-list" class="space-y-3">
                     <p class="text-gray-500 text-center py-8">取引履歴がありません</p>
@@ -704,6 +742,158 @@ app.get('/', (c) => {
             currentMonth = e.target.value;
             await loadTransactions();
             await loadSummary();
+          }
+        </script>
+    </body>
+    </html>
+  `)
+})
+
+// === カテゴリ別集計ページ ===
+app.get('/categories', (c) => {
+  return c.html(`
+    <!DOCTYPE html>
+    <html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>カテゴリ別集計 - 家計簿アプリ</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-gray-50">
+        <div class="max-w-4xl mx-auto p-4 md:p-8">
+            <!-- ヘッダー -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                            <i class="fas fa-list mr-2 text-green-600"></i>
+                            カテゴリ別集計
+                        </h1>
+                        <p class="text-gray-600">カテゴリごとの収支状況を確認できます</p>
+                    </div>
+                    <a href="/" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition duration-200 text-sm font-semibold">
+                        <i class="fas fa-home mr-2"></i>
+                        ホームに戻る
+                    </a>
+                </div>
+            </div>
+
+            <!-- 月選択 -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <label class="block text-gray-700 font-semibold mb-2">
+                    <i class="fas fa-calendar mr-2"></i>表示月
+                </label>
+                <input type="month" id="month-selector" class="w-full md:w-auto px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent">
+            </div>
+
+            <!-- 収入カテゴリ集計 -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-arrow-up mr-2 text-green-600"></i>
+                    収入カテゴリ
+                </h2>
+                <div id="income-summary" class="space-y-3">
+                    <p class="text-gray-500 text-center py-8">データを読み込んでいます...</p>
+                </div>
+            </div>
+
+            <!-- 支出カテゴリ集計 -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-arrow-down mr-2 text-red-600"></i>
+                    支出カテゴリ
+                </h2>
+                <div id="expense-summary" class="space-y-3">
+                    <p class="text-gray-500 text-center py-8">データを読み込んでいます...</p>
+                </div>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+        <script>
+          let currentMonth = '';
+
+          // 初期化
+          document.addEventListener('DOMContentLoaded', async () => {
+            // 今月を設定
+            const now = new Date();
+            currentMonth = now.toISOString().slice(0, 7);
+            document.getElementById('month-selector').value = currentMonth;
+
+            // データ読み込み
+            await loadCategorySummary();
+
+            // イベントリスナー設定
+            document.getElementById('month-selector').addEventListener('change', handleMonthChange);
+          });
+
+          // カテゴリ別集計読み込み
+          async function loadCategorySummary() {
+            try {
+              const response = await axios.get(\`/api/summary/categories?month=\${currentMonth}\`);
+              const categorySummary = response.data.category_summary;
+              
+              // 収入と支出に分ける
+              const incomeCategories = categorySummary.filter(cat => cat.type === 'income');
+              const expenseCategories = categorySummary.filter(cat => cat.type === 'expense');
+              
+              // 収入カテゴリ表示
+              renderCategorySummary('income-summary', incomeCategories, 'income');
+              
+              // 支出カテゴリ表示
+              renderCategorySummary('expense-summary', expenseCategories, 'expense');
+            } catch (error) {
+              console.error('Failed to load category summary:', error);
+              document.getElementById('income-summary').innerHTML = 
+                '<p class="text-red-500 text-center py-8">データの読み込みに失敗しました</p>';
+              document.getElementById('expense-summary').innerHTML = 
+                '<p class="text-red-500 text-center py-8">データの読み込みに失敗しました</p>';
+            }
+          }
+
+          // カテゴリ集計表示
+          function renderCategorySummary(containerId, categories, type) {
+            const container = document.getElementById(containerId);
+            
+            if (categories.length === 0) {
+              container.innerHTML = \`<p class="text-gray-500 text-center py-8">\${type === 'income' ? '収入' : '支出'}がありません</p>\`;
+              return;
+            }
+            
+            // 金額が多い順にソート済み（APIでソート済み）
+            const colorClass = type === 'income' ? 'text-green-600' : 'text-red-600';
+            const bgClass = type === 'income' ? 'bg-green-50' : 'bg-red-50';
+            
+            container.innerHTML = categories.map(cat => {
+              const amount = cat.total_amount || 0;
+              
+              return \`
+                <div class="\${bgClass} rounded-lg p-4 hover:shadow-md transition">
+                  <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center space-x-3">
+                      <div class="text-3xl">\${cat.icon}</div>
+                      <div>
+                        <h3 class="font-bold text-gray-800 text-lg">\${cat.name}</h3>
+                        <p class="text-xs text-gray-500">取引件数: \${cat.transaction_count}件</p>
+                      </div>
+                    </div>
+                    <div class="text-right">
+                      <p class="text-2xl font-bold \${colorClass}">
+                        \${type === 'income' ? '+' : '-'}¥\${amount.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              \`;
+            }).join('');
+          }
+
+          // 月変更
+          async function handleMonthChange(e) {
+            currentMonth = e.target.value;
+            await loadCategorySummary();
           }
         </script>
     </body>
