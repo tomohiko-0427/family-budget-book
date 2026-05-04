@@ -445,24 +445,19 @@ app.get('/', (c) => {
             </div>
 
             <!-- 取引履歴 -->
-            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-                <h2 class="text-xl font-bold text-gray-800 mb-4">
-                    <i class="fas fa-history mr-2 text-blue-600"></i>
-                    取引履歴
-                </h2>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-bold text-gray-800">
+                        <i class="fas fa-history mr-2 text-blue-600"></i>
+                        取引履歴
+                    </h2>
+                    <a href="/tags" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition duration-200 text-sm font-semibold">
+                        <i class="fas fa-chart-bar mr-2"></i>
+                        タグ別集計
+                    </a>
+                </div>
                 <div id="transactions-list" class="space-y-3">
                     <p class="text-gray-500 text-center py-8">取引履歴がありません</p>
-                </div>
-            </div>
-
-            <!-- タグ別集計 -->
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <h2 class="text-xl font-bold text-gray-800 mb-4">
-                    <i class="fas fa-chart-bar mr-2 text-blue-600"></i>
-                    タグ別集計
-                </h2>
-                <div id="tag-summary" class="space-y-2">
-                    <p class="text-gray-500 text-center py-8">タグがありません</p>
                 </div>
             </div>
         </div>
@@ -488,7 +483,6 @@ app.get('/', (c) => {
             await loadTags();
             await loadTransactions();
             await loadSummary();
-            await loadTagSummary();
 
             // イベントリスナー設定
             document.getElementById('transaction-form').addEventListener('submit', handleSubmit);
@@ -655,37 +649,6 @@ app.get('/', (c) => {
             }
           }
 
-          // タグ別集計読み込み
-          async function loadTagSummary() {
-            try {
-              const response = await axios.get(\`/api/summary/tags?month=\${currentMonth}\`);
-              const tagSummary = response.data.tag_summary;
-              
-              const container = document.getElementById('tag-summary');
-              
-              if (tagSummary.length === 0) {
-                container.innerHTML = '<p class="text-gray-500 text-center py-8">タグがありません</p>';
-                return;
-              }
-              
-              container.innerHTML = tagSummary.map(tag => \`
-                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <div class="flex items-center space-x-2">
-                    <i class="fas fa-tag text-blue-600"></i>
-                    <span class="font-semibold text-gray-800">\${tag.name}</span>
-                    <span class="text-xs text-gray-500">(\${tag.transaction_count}件)</span>
-                  </div>
-                  <div class="flex space-x-4 text-sm">
-                    <span class="text-green-600">収入: ¥\${tag.total_income.toLocaleString()}</span>
-                    <span class="text-red-600">支出: ¥\${tag.total_expense.toLocaleString()}</span>
-                  </div>
-                </div>
-              \`).join('');
-            } catch (error) {
-              console.error('Failed to load tag summary:', error);
-            }
-          }
-
           // フォーム送信
           async function handleSubmit(e) {
             e.preventDefault();
@@ -712,7 +675,6 @@ app.get('/', (c) => {
               // データ再読み込み
               await loadTransactions();
               await loadSummary();
-              await loadTagSummary();
               
               alert('取引を保存しました');
             } catch (error) {
@@ -731,7 +693,6 @@ app.get('/', (c) => {
               await axios.delete(\`/api/transactions/\${id}\`);
               await loadTransactions();
               await loadSummary();
-              await loadTagSummary();
             } catch (error) {
               console.error('Failed to delete transaction:', error);
               alert('削除に失敗しました');
@@ -743,6 +704,142 @@ app.get('/', (c) => {
             currentMonth = e.target.value;
             await loadTransactions();
             await loadSummary();
+          }
+        </script>
+    </body>
+    </html>
+  `)
+})
+
+// === タグ別集計ページ ===
+app.get('/tags', (c) => {
+  return c.html(`
+    <!DOCTYPE html>
+    <html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>タグ別集計 - 家計簿アプリ</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-gray-50">
+        <div class="max-w-4xl mx-auto p-4 md:p-8">
+            <!-- ヘッダー -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                            <i class="fas fa-chart-bar mr-2 text-purple-600"></i>
+                            タグ別集計
+                        </h1>
+                        <p class="text-gray-600">タグごとの収支状況を確認できます</p>
+                    </div>
+                    <a href="/" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition duration-200 text-sm font-semibold">
+                        <i class="fas fa-home mr-2"></i>
+                        ホームに戻る
+                    </a>
+                </div>
+            </div>
+
+            <!-- 月選択 -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <label class="block text-gray-700 font-semibold mb-2">
+                    <i class="fas fa-calendar mr-2"></i>表示月
+                </label>
+                <input type="month" id="month-selector" class="w-full md:w-auto px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+            </div>
+
+            <!-- タグ別集計 -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-tags mr-2 text-purple-600"></i>
+                    集計結果
+                </h2>
+                <div id="tag-summary" class="space-y-3">
+                    <p class="text-gray-500 text-center py-8">データを読み込んでいます...</p>
+                </div>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+        <script>
+          let currentMonth = '';
+
+          // 初期化
+          document.addEventListener('DOMContentLoaded', async () => {
+            // 今月を設定
+            const now = new Date();
+            currentMonth = now.toISOString().slice(0, 7);
+            document.getElementById('month-selector').value = currentMonth;
+
+            // データ読み込み
+            await loadTagSummary();
+
+            // イベントリスナー設定
+            document.getElementById('month-selector').addEventListener('change', handleMonthChange);
+          });
+
+          // タグ別集計読み込み
+          async function loadTagSummary() {
+            try {
+              const response = await axios.get(\`/api/summary/tags?month=\${currentMonth}\`);
+              const tagSummary = response.data.tag_summary;
+              
+              const container = document.getElementById('tag-summary');
+              
+              if (tagSummary.length === 0) {
+                container.innerHTML = '<p class="text-gray-500 text-center py-8">タグがありません</p>';
+                return;
+              }
+              
+              // 支出が多い順にソート
+              const sortedTags = tagSummary.sort((a, b) => b.total_expense - a.total_expense);
+              
+              container.innerHTML = sortedTags.map(tag => {
+                const netAmount = tag.total_income - tag.total_expense;
+                const netColor = netAmount >= 0 ? 'text-green-600' : 'text-red-600';
+                
+                return \`
+                  <div class="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition">
+                    <div class="flex items-center justify-between mb-3">
+                      <div class="flex items-center space-x-3">
+                        <i class="fas fa-tag text-purple-600 text-2xl"></i>
+                        <div>
+                          <h3 class="font-bold text-gray-800 text-lg">\${tag.name}</h3>
+                          <p class="text-xs text-gray-500">取引件数: \${tag.transaction_count}件</p>
+                        </div>
+                      </div>
+                      <div class="text-right">
+                        <p class="text-sm text-gray-600 mb-1">差額</p>
+                        <p class="text-xl font-bold \${netColor}">
+                          \${netAmount >= 0 ? '+' : ''}\¥\${netAmount.toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-gray-200">
+                      <div class="text-center">
+                        <p class="text-xs text-gray-500 mb-1">収入</p>
+                        <p class="text-lg font-semibold text-green-600">¥\${tag.total_income.toLocaleString()}</p>
+                      </div>
+                      <div class="text-center">
+                        <p class="text-xs text-gray-500 mb-1">支出</p>
+                        <p class="text-lg font-semibold text-red-600">¥\${tag.total_expense.toLocaleString()}</p>
+                      </div>
+                    </div>
+                  </div>
+                \`;
+              }).join('');
+            } catch (error) {
+              console.error('Failed to load tag summary:', error);
+              document.getElementById('tag-summary').innerHTML = 
+                '<p class="text-red-500 text-center py-8">データの読み込みに失敗しました</p>';
+            }
+          }
+
+          // 月変更
+          async function handleMonthChange(e) {
+            currentMonth = e.target.value;
             await loadTagSummary();
           }
         </script>
