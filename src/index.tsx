@@ -71,7 +71,22 @@ app.get('/api/transactions', async (c) => {
     
     const { results } = await c.env.DB.prepare(query).all()
     
-    return c.json({ transactions: results })
+    // 各取引のタグを取得
+    const transactions = await Promise.all(results.map(async (transaction: any) => {
+      const { results: tags } = await c.env.DB.prepare(`
+        SELECT t.id, t.name FROM tags t
+        JOIN transaction_tags tt ON t.id = tt.tag_id
+        WHERE tt.transaction_id = ?
+        ORDER BY t.name
+      `).bind(transaction.id).all()
+      
+      return {
+        ...transaction,
+        tags: tags || []
+      }
+    }))
+    
+    return c.json({ transactions })
   } catch (error) {
     console.error(error)
     return c.json({ error: 'Failed to fetch transactions' }, 500)
@@ -81,7 +96,7 @@ app.get('/api/transactions', async (c) => {
 // 取引作成
 app.post('/api/transactions', async (c) => {
   try {
-    const { type, amount, category_id, description, date } = await c.req.json()
+    const { type, amount, category_id, description, date, tag_ids } = await c.req.json()
     
     // バリデーション
     if (!type || !amount || !category_id || !date) {
@@ -97,13 +112,25 @@ app.post('/api/transactions', async (c) => {
       VALUES (?, ?, ?, ?, ?)
     `).bind(type, amount, category_id, description || '', date).run()
     
+    const transactionId = result.meta.last_row_id
+    
+    // タグを追加
+    if (tag_ids && Array.isArray(tag_ids) && tag_ids.length > 0) {
+      for (const tagId of tag_ids) {
+        await c.env.DB.prepare(`
+          INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)
+        `).bind(transactionId, tagId).run()
+      }
+    }
+    
     return c.json({ 
-      id: result.meta.last_row_id,
+      id: transactionId,
       type,
       amount,
       category_id,
       description,
-      date
+      date,
+      tag_ids: tag_ids || []
     }, 201)
   } catch (error) {
     console.error(error)
@@ -124,6 +151,125 @@ app.delete('/api/transactions/:id', async (c) => {
   } catch (error) {
     console.error(error)
     return c.json({ error: 'Failed to delete transaction' }, 500)
+  }
+})
+
+// === タグ関連API ===
+
+// タグ一覧取得
+app.get('/api/tags', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(`
+      SELECT * FROM tags ORDER BY name
+    `).all()
+    
+    return c.json({ tags: results })
+  } catch (error) {
+    console.error(error)
+    return c.json({ error: 'Failed to fetch tags' }, 500)
+  }
+})
+
+// タグ作成
+app.post('/api/tags', async (c) => {
+  try {
+    const { name } = await c.req.json()
+    
+    if (!name || name.trim() === '') {
+      return c.json({ error: 'Tag name is required' }, 400)
+    }
+    
+    const result = await c.env.DB.prepare(`
+      INSERT INTO tags (name) VALUES (?)
+    `).bind(name.trim()).run()
+    
+    return c.json({ 
+      id: result.meta.last_row_id,
+      name: name.trim()
+    }, 201)
+  } catch (error) {
+    console.error(error)
+    return c.json({ error: 'Failed to create tag' }, 500)
+  }
+})
+
+// 取引にタグを追加
+app.post('/api/transactions/:id/tags', async (c) => {
+  try {
+    const transactionId = c.req.param('id')
+    const { tag_ids } = await c.req.json()
+    
+    if (!tag_ids || !Array.isArray(tag_ids)) {
+      return c.json({ error: 'tag_ids array is required' }, 400)
+    }
+    
+    // 既存のタグをクリア
+    await c.env.DB.prepare(`
+      DELETE FROM transaction_tags WHERE transaction_id = ?
+    `).bind(transactionId).run()
+    
+    // 新しいタグを追加
+    for (const tagId of tag_ids) {
+      await c.env.DB.prepare(`
+        INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)
+      `).bind(transactionId, tagId).run()
+    }
+    
+    return c.json({ success: true })
+  } catch (error) {
+    console.error(error)
+    return c.json({ error: 'Failed to update transaction tags' }, 500)
+  }
+})
+
+// 取引のタグ取得
+app.get('/api/transactions/:id/tags', async (c) => {
+  try {
+    const transactionId = c.req.param('id')
+    
+    const { results } = await c.env.DB.prepare(`
+      SELECT t.* FROM tags t
+      JOIN transaction_tags tt ON t.id = tt.tag_id
+      WHERE tt.transaction_id = ?
+      ORDER BY t.name
+    `).bind(transactionId).all()
+    
+    return c.json({ tags: results })
+  } catch (error) {
+    console.error(error)
+    return c.json({ error: 'Failed to fetch transaction tags' }, 500)
+  }
+})
+
+// タグ別集計
+app.get('/api/summary/tags', async (c) => {
+  try {
+    const month = c.req.query('month')
+    
+    let query = `
+      SELECT 
+        t.id,
+        t.name,
+        COUNT(DISTINCT tr.id) as transaction_count,
+        SUM(CASE WHEN tr.type = 'income' THEN tr.amount ELSE 0 END) as total_income,
+        SUM(CASE WHEN tr.type = 'expense' THEN tr.amount ELSE 0 END) as total_expense
+      FROM tags t
+      LEFT JOIN transaction_tags tt ON t.id = tt.tag_id
+      LEFT JOIN transactions tr ON tt.transaction_id = tr.id
+    `
+    
+    if (month) {
+      query += ` WHERE tr.date LIKE '${month}%'`
+    }
+    
+    query += ` GROUP BY t.id, t.name ORDER BY t.name`
+    
+    const { results } = await c.env.DB.prepare(query).all()
+    
+    return c.json({ tag_summary: results })
+  } catch (error) {
+    console.error(error)
+    return c.json({ error: 'Failed to fetch tag summary' }, 500)
   }
 })
 
@@ -277,6 +423,20 @@ app.get('/', (c) => {
                         <label class="block text-gray-700 font-semibold mb-2">メモ</label>
                         <input type="text" id="description" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="詳細を入力（任意）">
                     </div>
+                    <div class="mb-4">
+                        <label class="block text-gray-700 font-semibold mb-2">
+                            <i class="fas fa-tags mr-1"></i>タグ
+                        </label>
+                        <div class="flex gap-2 mb-2">
+                            <input type="text" id="new-tag" class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="新しいタグを入力">
+                            <button type="button" onclick="addNewTag()" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition">
+                                <i class="fas fa-plus"></i> 追加
+                            </button>
+                        </div>
+                        <div id="tag-selection" class="flex flex-wrap gap-2">
+                            <!-- タグがここに表示されます -->
+                        </div>
+                    </div>
                     <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200">
                         <i class="fas fa-save mr-2"></i>
                         保存
@@ -285,7 +445,7 @@ app.get('/', (c) => {
             </div>
 
             <!-- 取引履歴 -->
-            <div class="bg-white rounded-lg shadow-md p-6">
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
                 <h2 class="text-xl font-bold text-gray-800 mb-4">
                     <i class="fas fa-history mr-2 text-blue-600"></i>
                     取引履歴
@@ -294,12 +454,25 @@ app.get('/', (c) => {
                     <p class="text-gray-500 text-center py-8">取引履歴がありません</p>
                 </div>
             </div>
+
+            <!-- タグ別集計 -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-chart-bar mr-2 text-blue-600"></i>
+                    タグ別集計
+                </h2>
+                <div id="tag-summary" class="space-y-2">
+                    <p class="text-gray-500 text-center py-8">タグがありません</p>
+                </div>
+            </div>
         </div>
 
         <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
         <script>
           // グローバル変数
           let categories = [];
+          let tags = [];
+          let selectedTagIds = [];
           let currentMonth = '';
 
           // 初期化
@@ -312,8 +485,10 @@ app.get('/', (c) => {
 
             // データ読み込み
             await loadCategories();
+            await loadTags();
             await loadTransactions();
             await loadSummary();
+            await loadTagSummary();
 
             // イベントリスナー設定
             document.getElementById('transaction-form').addEventListener('submit', handleSubmit);
@@ -330,6 +505,73 @@ app.get('/', (c) => {
             } catch (error) {
               console.error('Failed to load categories:', error);
               alert('カテゴリーの読み込みに失敗しました');
+            }
+          }
+
+          // タグ読み込み
+          async function loadTags() {
+            try {
+              const response = await axios.get('/api/tags');
+              tags = response.data.tags;
+              renderTagSelection();
+            } catch (error) {
+              console.error('Failed to load tags:', error);
+            }
+          }
+
+          // タグ選択UI表示
+          function renderTagSelection() {
+            const container = document.getElementById('tag-selection');
+            if (tags.length === 0) {
+              container.innerHTML = '<p class="text-gray-500 text-sm">タグがありません</p>';
+              return;
+            }
+            
+            container.innerHTML = tags.map(tag => {
+              const isSelected = selectedTagIds.includes(tag.id);
+              return \`
+                <button type="button" 
+                  onclick="toggleTag(\${tag.id})"
+                  class="px-3 py-1 rounded-full text-sm transition \${
+                    isSelected 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }">
+                  <i class="fas fa-tag mr-1"></i>\${tag.name}
+                </button>
+              \`;
+            }).join('');
+          }
+
+          // タグ選択切り替え
+          function toggleTag(tagId) {
+            const index = selectedTagIds.indexOf(tagId);
+            if (index > -1) {
+              selectedTagIds.splice(index, 1);
+            } else {
+              selectedTagIds.push(tagId);
+            }
+            renderTagSelection();
+          }
+
+          // 新しいタグ追加
+          async function addNewTag() {
+            const input = document.getElementById('new-tag');
+            const tagName = input.value.trim();
+            
+            if (!tagName) {
+              alert('タグ名を入力してください');
+              return;
+            }
+            
+            try {
+              const response = await axios.post('/api/tags', { name: tagName });
+              tags.push(response.data);
+              input.value = '';
+              renderTagSelection();
+            } catch (error) {
+              console.error('Failed to create tag:', error);
+              alert('タグの作成に失敗しました');
             }
           }
 
@@ -363,23 +605,34 @@ app.get('/', (c) => {
               }
               
               listEl.innerHTML = transactions.map(t => \`
-                <div class="transaction-\${t.type} bg-gray-50 rounded-lg p-4 flex items-center justify-between hover:bg-gray-100 transition">
-                  <div class="flex items-center space-x-4">
-                    <div class="text-3xl">\${t.category_icon}</div>
-                    <div>
-                      <p class="font-semibold text-gray-800">\${t.category_name}</p>
-                      <p class="text-sm text-gray-600">\${t.description || '-'}</p>
-                      <p class="text-xs text-gray-500">\${t.date}</p>
+                <div class="transaction-\${t.type} bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center space-x-4">
+                      <div class="text-3xl">\${t.category_icon}</div>
+                      <div>
+                        <p class="font-semibold text-gray-800">\${t.category_name}</p>
+                        <p class="text-sm text-gray-600">\${t.description || '-'}</p>
+                        <p class="text-xs text-gray-500">\${t.date}</p>
+                      </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                      <p class="text-xl font-bold \${t.type === 'income' ? 'text-green-600' : 'text-red-600'}">
+                        \${t.type === 'income' ? '+' : '-'}¥\${t.amount.toLocaleString()}
+                      </p>
+                      <button onclick="deleteTransaction(\${t.id})" class="text-red-500 hover:text-red-700 transition">
+                        <i class="fas fa-trash"></i>
+                      </button>
                     </div>
                   </div>
-                  <div class="flex items-center space-x-3">
-                    <p class="text-xl font-bold \${t.type === 'income' ? 'text-green-600' : 'text-red-600'}">
-                      \${t.type === 'income' ? '+' : '-'}¥\${t.amount.toLocaleString()}
-                    </p>
-                    <button onclick="deleteTransaction(\${t.id})" class="text-red-500 hover:text-red-700 transition">
-                      <i class="fas fa-trash"></i>
-                    </button>
-                  </div>
+                  \${t.tags && t.tags.length > 0 ? \`
+                    <div class="flex flex-wrap gap-1 mt-2">
+                      \${t.tags.map(tag => \`
+                        <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">
+                          <i class="fas fa-tag mr-1"></i>\${tag.name}
+                        </span>
+                      \`).join('')}
+                    </div>
+                  \` : ''}
                 </div>
               \`).join('');
             } catch (error) {
@@ -402,6 +655,37 @@ app.get('/', (c) => {
             }
           }
 
+          // タグ別集計読み込み
+          async function loadTagSummary() {
+            try {
+              const response = await axios.get(\`/api/summary/tags?month=\${currentMonth}\`);
+              const tagSummary = response.data.tag_summary;
+              
+              const container = document.getElementById('tag-summary');
+              
+              if (tagSummary.length === 0) {
+                container.innerHTML = '<p class="text-gray-500 text-center py-8">タグがありません</p>';
+                return;
+              }
+              
+              container.innerHTML = tagSummary.map(tag => \`
+                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div class="flex items-center space-x-2">
+                    <i class="fas fa-tag text-blue-600"></i>
+                    <span class="font-semibold text-gray-800">\${tag.name}</span>
+                    <span class="text-xs text-gray-500">(\${tag.transaction_count}件)</span>
+                  </div>
+                  <div class="flex space-x-4 text-sm">
+                    <span class="text-green-600">収入: ¥\${tag.total_income.toLocaleString()}</span>
+                    <span class="text-red-600">支出: ¥\${tag.total_expense.toLocaleString()}</span>
+                  </div>
+                </div>
+              \`).join('');
+            } catch (error) {
+              console.error('Failed to load tag summary:', error);
+            }
+          }
+
           // フォーム送信
           async function handleSubmit(e) {
             e.preventDefault();
@@ -411,7 +695,8 @@ app.get('/', (c) => {
               amount: parseInt(document.getElementById('amount').value),
               category_id: parseInt(document.getElementById('category').value),
               description: document.getElementById('description').value,
-              date: document.getElementById('date').value
+              date: document.getElementById('date').value,
+              tag_ids: selectedTagIds
             };
             
             try {
@@ -420,11 +705,14 @@ app.get('/', (c) => {
               // フォームリセット
               document.getElementById('transaction-form').reset();
               document.getElementById('date').valueAsDate = new Date();
+              selectedTagIds = [];
               updateCategoryOptions();
+              renderTagSelection();
               
               // データ再読み込み
               await loadTransactions();
               await loadSummary();
+              await loadTagSummary();
               
               alert('取引を保存しました');
             } catch (error) {
@@ -443,6 +731,7 @@ app.get('/', (c) => {
               await axios.delete(\`/api/transactions/\${id}\`);
               await loadTransactions();
               await loadSummary();
+              await loadTagSummary();
             } catch (error) {
               console.error('Failed to delete transaction:', error);
               alert('削除に失敗しました');
@@ -454,6 +743,7 @@ app.get('/', (c) => {
             currentMonth = e.target.value;
             await loadTransactions();
             await loadSummary();
+            await loadTagSummary();
           }
         </script>
     </body>
